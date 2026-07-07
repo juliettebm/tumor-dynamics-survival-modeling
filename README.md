@@ -4,12 +4,12 @@
 
 This project reproduces, on **fully simulated data**, the methodological approach used
 in pharmacometrics to link individual tumor dynamics (longitudinal RECIST-type
-measurements) to survival endpoints (PFS/OS) in oncology — a central question in
+measurements) to survival endpoints (PFS/OS) in oncology, a central question in
 clinical development of anticancer therapies (e.g., Claret et al., Wang et al.,
 *Clin Pharmacol Ther*, 2009).
 
-No real patient data is used. The goal is to demonstrate methodological understanding —
-simulation, individual parameter estimation, survival analysis, and joint modeling —
+No real patient data is used. The goal is to demonstrate methodological understanding,
+simulation, individual parameter estimation, survival analysis, and joint modeling,
 before applying the same approach to real-world data.
 
 ## Notebooks
@@ -45,10 +45,10 @@ protective and `d` is detrimental.
 |---|---|---|---|---|
 | Two-stage | Sparse (6-week scans, 15% noise) | 0.568 | 0.919 | Not significant (p = 0.60) |
 | Two-stage | Improved (3-week scans, 8% noise) | 0.830 | 0.990 | Significant (p = 0.007) |
-| Joint model | Improved design, simplified linear trend | — | — | Borderline (p = 0.056) |
+| Joint model | Improved design, simplified linear trend | - | - | Borderline (p = 0.056) |
 
 **Main takeaway.** Detecting a true tumor-dynamics/survival association is highly
-sensitive to the observation design (scan frequency, measurement precision) — a real
+sensitive to the observation design (scan frequency, measurement precision),a real
 but under-estimated design effect ("attenuation by measurement error"). The joint model
 provides a more statistically rigorous framework than the two-stage approach, at the
 cost of a simplified representation of tumor dynamics, illustrating a genuine
@@ -60,6 +60,5 @@ R — packages: `minpack.lm`, `survival`, `survminer`, `nlme`, `JM`, `dplyr`, `g
 
 ## Author
 
-Juliette Bouli-Mengue — project built as part of preparing an application for an
-apprenticeship in pharmacometric modeling (individual lesion dynamics and survival,
-NSCLC).
+Juliette Bouli-Mengue 
+
