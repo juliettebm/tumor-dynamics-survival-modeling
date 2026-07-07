@@ -289,3 +289,6 @@ estimation and survival modeling as two independent steps, ignoring the uncertai
 modeling approach developed in the companion notebook
 (`02_joint_model.Rmd`), where the longitudinal trajectory and survival are estimated
 simultaneously.
+
+saveRDS(patients, "patients_final.rds")
+saveRDS(longitudinal_data, "longitudinal_data_final.rds")
