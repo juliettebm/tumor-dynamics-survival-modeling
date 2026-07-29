@@ -19,15 +19,19 @@ No real patient data is used. The goal is to demonstrate methodological understa
 
 ## Project Structure
 
+```
 tumor-dynamics-survival-modeling/
 │
 ├── notebooks/
-│ ├── 01_simulation_and_joint_model.Rmd # two-stage vs. joint model
-│ ├── 02_ADC_PK_PD.Rmd                  # single-lesion ADC PK/PD/TGI, landmark survival
-│ ├── 03_multi_lesion_RECIST_PFS.Rmd    # multi-lesion RECIST 1.1, PFS vs. OS
-│ └── 04_ADC_multi_lesion_PFS_OS.Rmd    # repeated-dosing ADC, multi-lesion PFS/OS
+│   ├── 01_simulation_and_joint_model.Rmd       # two-stage vs. joint model
+│   ├── 02_ADC_PK_PD.Rmd                        # single-lesion ADC PK/PD/TGI, landmark survival
+│   ├── 03_multi_lesion_RECIST_PFS.Rmd          # multi-lesion RECIST 1.1, PFS vs. OS
+│   └── 04_ADC_multi_lesion_PFS_OS.Rmd          # repeated-dosing ADC, multi-lesion PFS/OS
 ├── .gitignore
 └── README.md
+```
+
+---
 
 The notebooks form a coherent progression:
 
