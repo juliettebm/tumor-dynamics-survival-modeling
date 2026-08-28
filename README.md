@@ -1,4 +1,4 @@
-# 🧬 Tumor Dynamics and Survival Modeling (Simulated Data)
+# Tumor Dynamics and Survival Modeling (Simulated Data)
 
 [![Data](https://img.shields.io/badge/Data-Fully%20Simulated-blue)](.)
 [![R](https://img.shields.io/badge/R-4.x-blue?logo=r&logoColor=white)](https://www.r-project.org/)
@@ -151,7 +151,7 @@ Euler integration (fixed time step) is used throughout for the TGI ODEs; a dedic
 
 ## Disclaimer
 
-⚠️ This project is for **educational purposes only**, using fully simulated data. It is a self-taught methodological exercise and is **not a replication of any industry model or a clinical tool**.
+This project is for **educational purposes only**, using fully simulated data. It is a self-taught methodological exercise and is **not a replication of any industry model or a clinical tool**.
 
 ---
 
