@@ -50,7 +50,7 @@ The notebooks form a coherent progression:
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/juliettebm/tumor-dynamics-survival-modeling.git
 cd tumor-dynamics-survival-modeling
 ```
 
@@ -62,7 +62,7 @@ install.packages(c("minpack.lm", "survival", "survminer", "nlme", "JM", "dplyr",
 
 ### 3. Run the notebooks in order
 
-Notebooks are self-contained and simulate their own data; running `01` through `04` in order follows the intended methodological progression, though each can also be run independently.
+Notebook `01` simulates the patient cohort and writes `patients_final.rds` and `longitudinal_data_final.rds`; notebooks `02` to `04` read `patients_final.rds` (a copy is versioned in `notebooks/`, so each notebook can also be rendered on its own). Running `01` through `04` in order follows the intended methodological progression.
 
 ```r
 rmarkdown::render("notebooks/01_simulation_and_joint_model.Rmd")
@@ -152,6 +152,12 @@ Euler integration (fixed time step) is used throughout for the TGI ODEs; a dedic
 ## Disclaimer
 
 This project is for **educational purposes only**, using fully simulated data. It is a self-taught methodological exercise and is **not a replication of any industry model or a clinical tool**.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ---
 
