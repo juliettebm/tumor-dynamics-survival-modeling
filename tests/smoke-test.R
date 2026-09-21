@@ -135,3 +135,45 @@ assert(is.finite(get("pfs_p_value", render_environment_04)), "PFS log-rank resul
 assert(is.finite(get("os_p_value", render_environment_04)), "OS log-rank result is invalid")
 
 message("Smoke test passed: notebook 04 uses coherent units and prospective OS simulation")
+
+# Notebook 04: the new-lesion process must be exercised and shared by both arms.
+assert("progression_cause" %in% names(prog_adc_04), "Notebook 04 lost the progression cause column")
+assert(any(prog_adc_04$progression_cause == "new_lesion"), "Notebook 04 never detected a new lesion")
+
+# Notebook 03 regression test: new-lesion progression, PFS composite and loss to follow-up.
+source_notebook_03 <- normalizePath(
+  file.path("notebooks", "03_multi_lesion_RECIST_PFS.Rmd"),
+  mustWork = TRUE
+)
+notebook_03 <- file.path(work_dir, "03_multi_lesion_RECIST_PFS.Rmd")
+if (!file.copy(source_notebook_03, notebook_03, overwrite = TRUE)) {
+  stop("Could not copy notebook 03 into the isolated working directory", call. = FALSE)
+}
+
+message("Rendering notebook 03 in ", work_dir)
+render_environment_03 <- new.env(parent = globalenv())
+rendered_file_03 <- rmarkdown::render(
+  input = notebook_03,
+  output_file = "03_multi_lesion_RECIST_PFS.html",
+  output_dir = work_dir,
+  intermediates_dir = work_dir,
+  knit_root_dir = work_dir,
+  quiet = TRUE,
+  envir = render_environment_03
+)
+
+assert(file.exists(rendered_file_03), "Notebook 03 did not produce an HTML file")
+
+progression_03 <- get("progression_times", render_environment_03)
+pfs_03 <- get("pfs_data", render_environment_03)
+comparison_03 <- get("comparison_data", render_environment_03)
+
+assert(nrow(progression_03) == nrow(patients), "Notebook 03 must have one progression record per patient")
+assert(all(c("target", "new_lesion") %in% progression_03$progression_cause), "Notebook 03 must exercise target and new-lesion progression")
+assert(all(progression_03$progression_event == as.integer(progression_03$progression_cause != "none")), "Progression event and cause disagree")
+assert(all(pfs_03$pfs_time <= pfs_03$pfs_time_true), "Loss to follow-up can only shorten PFS time")
+assert(all(pfs_03$pfs_event <= pfs_03$pfs_event_true), "Loss to follow-up can only remove PFS events")
+assert(all(pfs_03$pfs_time <= pfs_03$os_time), "PFS cannot exceed OS time")
+assert(all(is.finite(comparison_03$time) & comparison_03$time >= 0), "Invalid PFS/OS times in notebook 03")
+
+message("Smoke test passed: notebook 03 combines target and new-lesion progression coherently")
