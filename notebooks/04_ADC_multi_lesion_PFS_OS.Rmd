@@ -43,6 +43,10 @@ source(file.path(project_root, "R", "recist.R"))
 set_project_seed()
 ```  
 
+**Setup check.** PK/PD and RECIST logic are imported from the project modules used by
+the earlier notebooks. This final notebook combines those validated components rather
+than redefining them locally.
+
 ## 2. Loading the simulated population
 
 We reuse the simulated oncology population generated in notebook 1: each patient has
@@ -57,6 +61,10 @@ patients <- readRDS("patients_final.rds")
 
 head(patients)
 ```
+
+**Input check.** The common population is loaded unchanged, preserving patient-level
+heterogeneity and keeping the treated/no-treatment comparison paired at the level of
+the underlying disease parameters.
 
 ## 3. Simulating multiple lesions per patient
 
@@ -83,6 +91,10 @@ lesions <- patients %>%
 
 head(lesions, 10)
 ```
+
+**Observation.** The lesion table provides the common starting state for both arms.
+Only the treatment mechanism will differ; lesion count, baseline burden, and intrinsic
+growth are shared within patient.
 
 ## 4. Applying PK/PD: repeated dosing, one drug exposure profile per patient
 
@@ -123,6 +135,11 @@ ggplot(patient_pkpd %>% filter(patient_id == 1), aes(x = time, y = concentration
 
 head(patients %>% select(patient_id, kel_i))
 ```
+
+**PK/PD observation.** Superposition produces the expected q3w sawtooth exposure while
+patient-specific elimination rates preserve PK heterogeneity. Computing exposure once
+per patient guarantees that all lesions belonging to that patient receive the same
+systemic concentration profile.
 ## 5. Simulating each lesion under repeated-dosing treatment and the no-drug counterfactual
 
 Each lesion now uses its patient's repeated-dosing inhibition profile (Section 4, computed once per patient) rather than a single-dose profile computed per lesion. As before, we simulate two trajectories per lesion: one under ADC treatment, and one no-drug counterfactual.
@@ -154,6 +171,10 @@ for (i in 1:nrow(lesions)) {
 
 head(lesion_trajectories, 10)
 ```
+
+**Result.** Each lesion has two aligned trajectories on the same time grid: repeated-dose
+ADC and no-drug growth. This paired construction is retained through aggregation,
+RECIST assessment, and survival simulation.
 ## 6. Total tumor burden per arm
 
 We sum all lesions belonging to the same patient, separately for each arm (ADC and no-drug counterfactual), to obtain total SLD over time — the RECIST-based tumor burden metric used for progression detection in Section 7.
@@ -169,6 +190,10 @@ total_sld_by_arm <- lesion_trajectories %>%
 
 head(total_sld_by_arm, 10)
 ```
+
+**Aggregation check.** The result contains one row per patient and time point with a
+separate total SLD for each arm. No lesion-level information is used directly by the
+RECIST function after this aggregation.
 ## 7. Detecting RECIST progression on both arms
 
 We apply the same simplified target-lesion component of the RECIST 1.1 progression rule
@@ -182,6 +207,10 @@ recist_no_drug <- detect_progression(total_sld_by_arm, "SLD_total_no_drug")
 
 head(recist_adc %>% select(patient_id, time, SLD_total_adc, nadir, is_progression), 10)
 ```
+
+**Decision.** Each arm receives its own running nadir and progression assessment. Using
+one arm’s nadir for the other would invalidate the comparison because treatment changes
+both the minimum burden and the subsequent relative increase.
 ## 8. Constructing PFS and OS for both arms
 
 For each arm, we extract the first time of RECIST progression (as in notebook 3, Section 6). For OS, we reuse the landmark-based counterfactual hazard approach validated in notebook 2: both arms share the same hazard structure, differing only in the tumor burden (at the last observed time point) that feeds into it, ensuring a fair comparison, not two unrelated survival models.
@@ -234,6 +263,10 @@ pfs_data_combined <- bind_rows(pfs_data_adc, pfs_data_no_drug)
 head(pfs_data_combined, 10)
 pfs_data_combined %>% filter(patient_id %in% c(1, 2)) %>% select(patient_id, arm, progression_time, os_time, pfs_time, pfs_event)
 ```
+
+**Endpoint check.** The combined table keeps progression, OS, and PFS components for
+both arms. The displayed patient examples make the `min(progression, death)` logic
+auditable before fitting Kaplan–Meier curves.
 ## 9. Comparing PFS and OS between ADC and No ADC arms
 
 We now visualize whether the ADC treatment improves both PFS and OS relative to the no-drug counterfactual, using Kaplan-Meier curves for each endpoint.
@@ -258,7 +291,13 @@ pfs_data_combined %>%
 pfs_data_combined %>% filter(arm == "ADC") %>% summarise(never_progressed = mean(progression_event == 0))
 ```
 
-## 10. Conclusion and limitations
+**Result and interpretation.** The simulated ADC improves both endpoints relative to
+the no-ADC counterfactual: the log-rank results are **p < 0.0001 for PFS** and **p =
+0.021 for OS**. The larger separation for PFS is consistent with the model structure,
+where treatment acts directly on tumor burden and RECIST progression. These p-values
+describe the calibrated simulation and are not clinical evidence for a real product.
+
+## 10. General conclusion, limitations, and next decisions
 
 This notebook connects the two previously separate strands of the project: the
 multi-lesion RECIST framework (notebook 3) and the ADC PK/PD mechanism (notebook 2),
@@ -268,6 +307,24 @@ The calibrated model shows a clear, non-trivial treatment effect on both PFS
 pattern consistent with real oncology trials, where progression is often more
 sensitive to treatment effect than overall survival, which is influenced by
 subsequent lines of therapy and competing causes of death not modeled here.
+
+Across the four notebooks, the project now provides one traceable chain from simulated
+patient heterogeneity to longitudinal tumor dynamics, ADC exposure, lesion-level
+response, RECIST progression, PFS, and OS. The main conclusion is methodological: the
+framework connects these quantities coherently, while its calibrated parameters and
+same-source counterfactuals remain unsuitable for clinical-effect claims.
+
+**Decisions for a future iteration:**
+
+1. Replace empirically calibrated PD and hazard parameters with literature-based or
+   estimated values and document parameter uncertainty.
+2. Stop or switch treatment after progression and model dose delays, reductions, and
+   discontinuations.
+3. Add new-lesion progression and non-target disease to the RECIST implementation.
+4. Run repeated simulation scenarios and report uncertainty intervals for treatment
+   effects instead of a single seeded realization.
+5. Validate the workflow on an independent clinical dataset before drawing any
+   translational conclusion.
 
 **Limitations, stated explicitly:**
 

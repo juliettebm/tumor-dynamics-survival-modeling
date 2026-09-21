@@ -35,6 +35,10 @@ source(file.path(project_root, "R", "recist.R"))
 set_project_seed()
 ```
 
+**Setup check.** Shared RECIST functions and the fixed seed ensure that lesion
+generation, progression detection, and endpoint construction are reproducible without
+copying business rules into the notebook.
+
 ## 2. Loading the simulated population
 
 We reuse the simulated oncology population generated in notebook 1: each patient has
@@ -49,6 +53,10 @@ patients <- readRDS("patients_final.rds")
 
 head(patients)
 ```
+
+**Input check.** The same 200-patient population from Notebook 01 is reused. Survival
+ground truth therefore stays fixed while the disease representation changes from one
+aggregate burden to multiple lesions.
 
 ## 3. Simulating multiple lesions per patient
 
@@ -86,6 +94,10 @@ lesions %>%
   summarise(min_lesions = min(n_lesions), max_lesions = max(n_lesions), mean_lesions = mean(n_lesions))
 ```
 
+**Observation.** Each patient receives between five and ten lesions as specified. The
+lesion parameters remain anchored to patient-level dynamics, while bounded variation
+introduces within-patient heterogeneity without creating unrelated disease courses.
+
 ## 4. Simulating individual lesion trajectories and total tumor burden
 
 Each lesion follows the same biexponential TGI equation used in notebook 1, but with its own lesion-specific parameters instead of the patient-level ones. 
@@ -114,6 +126,10 @@ total_sld <- lesion_trajectories %>%
 head(total_sld, 12)
 
 ```
+
+**Result.** Lesion diameters are aggregated at each assessment into one total SLD per
+patient. The unit of the subsequent RECIST analysis is therefore explicit: progression
+is evaluated on total target-lesion burden, not independently lesion by lesion.
 ## 5. Detecting RECIST progression
 
 At each scan, we compare the current total SLD to the **nadir**, the lowest SLD value observed for that patient up to and including that time point. 
@@ -127,6 +143,10 @@ head(recist_data, 12)
 recist_data %>% filter(patient_id == 4) %>% select(time, SLD_total, nadir, relative_increase, absolute_increase, is_progression)
 ```
 
+**Quality check.** The patient example exposes every component of the rule—the running
+nadir, relative increase, absolute increase, and final flag—so the progression decision
+can be audited instead of treated as a black box.
+
 ## 6. Extracting time to RECIST progression
 
 For each patient, we identify the first time point at which RECIST progression is detected. Patients who never meet the progression criteria within the follow-up window
@@ -139,6 +159,10 @@ head(progression_times, 10)
 cat("Number of patients with RECIST progression detected:", sum(progression_times$progression_event), "out of", nrow(progression_times), "\n")
 progression_times %>% filter(progression_event == 0)
 ```
+
+**Observation.** The extraction produces one progression record per patient and keeps
+non-progressors as censored observations at their last scan. Patients without observed
+progression are therefore not silently discarded.
 
 ## 7. Constructing PFS as a composite endpoint
 
@@ -156,6 +180,10 @@ pfs_data <- patients %>%
 
 head(pfs_data, 10)
 ```
+
+**Endpoint decision.** PFS is the earliest of detected RECIST progression and death.
+The component times and event indicators remain in the table, preserving traceability
+for every composite endpoint.
 
 ## 8. Comparing PFS and OS
 
@@ -179,13 +207,28 @@ comparison_data %>%
   summarise(median_time = median(time), event_rate = mean(event))
 ```
 
-## 9. Conclusion and limitations
+**Result.** Median PFS is **36 weeks**, earlier than median OS at **52.3 weeks**. The PFS
+event rate is **98.5%**, compared with **77%** for OS. This ordering is coherent with the
+composite definition: progression can occur before death and therefore adds earlier
+events.
+
+## 9. Conclusion, limitations, and decisions for Notebook 04
 
 This notebook extends the tumor dynamics framework from notebooks 1 and 2 to a
 multi-lesion structure, closer to how RECIST is actually applied in clinical trials:
 total tumor burden as the sum of individually simulated lesions, progression detected
 via explicit RECIST 1.1 rules, and PFS constructed as a genuine composite endpoint
 rather than an independently simulated hazard.
+
+**Decisions carried forward:**
+
+1. Reuse the same RECIST functions for treated and untreated arms.
+2. Evaluate progression independently in each counterfactual arm because each arm has
+   its own nadir and tumor trajectory.
+3. Combine this multi-lesion structure with the ADC mechanism and repeated dosing from
+   Notebook 02.
+4. Compare both PFS and OS, while expecting the modeled treatment effect to appear more
+   directly in PFS.
 
 **Limitations, stated explicitly:**
 

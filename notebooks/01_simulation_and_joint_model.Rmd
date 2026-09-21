@@ -47,8 +47,13 @@ library(ggplot2)
 project_root <- Sys.getenv("TUMOR_PROJECT_ROOT", unset = "..")
 source(file.path(project_root, "R", "config.R"))
 source(file.path(project_root, "R", "metrics.R"))
+source(file.path(project_root, "R", "tgi.R"))
 set_project_seed()
 ```
+
+**Setup check.** The modeling libraries, shared configuration, and metric helpers are
+loaded from the project rather than duplicated here. The fixed seed makes the simulated
+population and all downstream comparisons reproducible.
 
 ## 2. Simulating "true" individual patient parameters
 
@@ -75,6 +80,11 @@ patients <- tibble(
 
 head(patients)
 ```
+
+**Observation.** The table contains one row per patient and preserves the three latent
+quantities needed downstream: baseline burden, regression rate, and regrowth rate.
+Their log-normal construction keeps them positive while introducing between-patient
+heterogeneity.
 
 ## 3. Simulating survival outcomes
 
@@ -107,6 +117,11 @@ patients <- patients %>%
 summary(patients$os_time)
 table(patients$os_event)
 ```
+
+**Result and decision.** Survival now has an explicit, known data-generating mechanism
+and administrative censoring at 104 weeks. This ground truth lets the later approaches
+be assessed on whether they recover a signal that genuinely exists, rather than merely
+whether they produce a small p-value.
 
 ## 4. Simulating longitudinal tumor measurements
 
@@ -143,33 +158,22 @@ ggplot(longitudinal_data %>% filter(patient_id <= 12),
   theme_minimal()
 ```
 
+**Observation.** The trajectories display heterogeneous regression and regrowth around
+the underlying smooth curves. The three-week schedule and 8% noise level are retained
+because they preserve enough information to estimate individual dynamics; the earlier
+sparse/noisy design remains documented above as an informative failed sensitivity
+analysis.
+
 ## 5. Two-stage approach: re-estimating g and d from noisy scans
 
 We act as if the true `g` and `d` were unknown, and re-estimate them for each patient
 from their noisy longitudinal measurements only.
 
 ```{r two-stage-fit}
-fit_one_patient <- function(df) {
-  tryCatch({
-    fit <- nlsLM(
-      SLD_obs ~ SLD0_est * (exp(-g_est * time) + exp(d_est * time) - 1),
-      data = df,
-      start = list(SLD0_est = df$SLD_obs[df$time == 0][1], g_est = 0.02, d_est = 0.01),
-      lower = c(SLD0_est = 1, g_est = 0.0001, d_est = 0.0001),
-      upper = c(SLD0_est = 500, g_est = 1, d_est = 1),
-      control = nls.lm.control(maxiter = 200)
-    )
-    coefs <- coef(fit)
-    tibble(g_hat = coefs["g_est"], d_hat = coefs["d_est"], convergence = TRUE)
-  }, error = function(e) {
-    tibble(g_hat = NA_real_, d_hat = NA_real_, convergence = FALSE)
-  })
-}
-
 individual_fits <- longitudinal_data %>%
   group_by(patient_id) %>%
   filter(n() >= 4) %>%
-  group_modify(~ fit_one_patient(.x)) %>%
+  group_modify(~ fit_tgi_patient(.x)) %>%
   ungroup()
 
 cat("Convergence rate:", mean(individual_fits$convergence, na.rm = TRUE) * 100, "%\n")
@@ -189,6 +193,11 @@ cor_d
 correlation_ci(cor_d, nrow(analysis_data))
 ```
 
+**Quality check.** Convergence is reported before the survival model so that selection
+caused by failed individual fits remains visible. Correlations against the hidden true
+parameters assess recovery directly, while the Cox model tests whether the estimated
+dynamics retain their prognostic signal.
+
 ```{r two-stage-plot}
 ggplot(analysis_data, aes(x = g, y = g_hat)) +
   geom_point(alpha = 0.5) +
@@ -196,6 +205,10 @@ ggplot(analysis_data, aes(x = g, y = g_hat)) +
   labs(title = "Estimated vs true g", x = "True g (hidden)", y = "Estimated g (g_hat)") +
   theme_minimal()
 ```
+
+**Visual check.** The identity line is stricter than correlation alone: it can reveal
+systematic bias as well as ranking agreement. The close alignment is consistent with
+the high numerical recovery reported below.
 
 **Interpretation.** `g_hat` and `d_hat` recover the true parameters well (correlations
 of 0.905 and 0.995 respectively; Fisher 95% CIs 0.876--0.927 and 0.993--0.996).
@@ -212,6 +225,10 @@ modeling approach developed below.
 saveRDS(patients, "patients_final.rds")
 saveRDS(longitudinal_data, "longitudinal_data_final.rds")
 ```
+
+**Pipeline output.** The patient-level and longitudinal datasets are saved without
+dropping their simulated ground truth. They become the reproducible inputs for the
+PK/PD, multi-lesion, RECIST, PFS, and OS notebooks that follow.
 
 ## 6. Joint model: simultaneous estimation
 
@@ -232,6 +249,10 @@ surv_data <- patients %>%
   mutate(patient_id = factor(patient_id)) %>%
   as.data.frame()
 ```
+
+**Preparation check.** The longitudinal and survival tables use the same factor-valued
+patient identifier. Positive SLD values are log-transformed for the linear mixed model;
+the original biexponential measurements remain unchanged in `longitudinal_data`.
 
 ```{r fit-joint-model}
 fit_lme <- lme(log_SLD ~ time, random = ~ time | patient_id, data = joint_data)
@@ -260,7 +281,25 @@ for trajectory uncertainty, using a deliberately simplified tumor dynamics
 representation. This is a genuine methodological trade-off: pharmacometricians must
 balance model realism against statistical tractability and interpretability.
 
-## 8. Limitations
+## 8. Conclusion, limitations, and decisions for the next notebooks
+
+This notebook establishes the project’s simulation backbone. Both analyses recover the
+constructed tumor–survival relationship: the two-stage model retains richer biological
+parameters, whereas the joint model propagates longitudinal uncertainty at the cost of
+a simpler trajectory. This is a methodological comparison, not evidence that one
+framework universally dominates the other.
+
+**Decisions carried forward:**
+
+1. Reuse `patients_final.rds` as the common population so later comparisons differ by
+   modeled mechanisms rather than by newly sampled cohorts.
+2. Keep units explicit whenever weekly tumor parameters enter day-level PK/PD models.
+3. Preserve untreated counterfactual trajectories so treatment comparisons share the
+   same data-generating structure.
+4. Build RECIST progression from longitudinal burden instead of simulating PFS as an
+   unrelated endpoint.
+
+**Limitations:**
 
 - The two-stage approach ignores estimation uncertainty when parameters are reused as
   fixed covariates; the joint model addresses this but uses a simplified linear tumor

@@ -1,6 +1,7 @@
 source(file.path("R", "recist.R"))
 source(file.path("R", "pk_pd.R"))
 source(file.path("R", "metrics.R"))
+source(file.path("R", "tgi.R"))
 
 assert <- function(condition, message) {
   if (!isTRUE(condition)) stop(message, call. = FALSE)
@@ -26,4 +27,6 @@ assert(all(emax_effect(c(0, 1, 10), 0.5, 1) >= 0), "Emax effect is invalid")
 
 interval <- correlation_ci(0.83, 200)
 assert(interval[["lower"]] < 0.83 && interval[["upper"]] > 0.83, "Correlation CI excludes its estimate")
+invalid_fit <- try(fit_tgi_patient(data.frame(time = 0, wrong = 1)), silent = TRUE)
+assert(inherits(invalid_fit, "try-error"), "Invalid TGI input should fail clearly")
 message("Reusable-function tests passed")

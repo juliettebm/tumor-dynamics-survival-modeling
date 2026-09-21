@@ -36,6 +36,10 @@ source(file.path(project_root, "R", "config.R"))
 set_project_seed()
 ```
 
+**Setup check.** The fixed seed and shared configuration make the simulated PK
+variability and survival outcomes reproducible. All analyses below operate on the same
+population produced by Notebook 01.
+
 ## 2. Loading the simulated population
 
 We reuse the simulated oncology population generated in notebook 1: each patient has
@@ -53,6 +57,10 @@ regenerated in Section 9 through the tumor-response hazard model, not reused as-
 patients <- readRDS("patients_final.rds")
 ```
 
+**Input check.** The loaded object retains one row per patient with the individual
+tumor-dynamics parameters and survival variables produced previously. No resampling or
+filtering is introduced at this stage.
+
 ## 3. Fixing the time-scale/unit mismatch
 
 `g` was defined in notebook 1 as a **per-week** regression rate. This notebook works on
@@ -68,6 +76,10 @@ summary(patients$g_daily)
 ```
 
 All growth terms in this notebook use `g_daily`, never the original weekly `g`.
+
+**Decision.** The converted variable is stored separately instead of overwriting `g`.
+This preserves the weekly source parameter for traceability and prevents an implicit
+unit change from propagating back into the original simulation.
 
 ## 4. ADC pharmacokinetic model (single representative patient)
 
@@ -97,6 +109,10 @@ ggplot(adc_pk, aes(x = time, y = concentration)) +
   theme_minimal()
 ```
 
+**Observation.** The single-dose concentration declines monotonically according to
+first-order elimination. This is an intentionally simple reference case and anticipates
+why repeated dosing is required for the longer follow-up in Notebook 04.
+
 ## 5. ADC pharmacodynamic model (Emax)
 
 $$Effect(t) = \frac{E_{max} \times C(t)}{EC_{50} + C(t)}$$
@@ -113,6 +129,10 @@ ggplot(adc_pk, aes(x = time, y = inhibition)) +
   labs(title = "ADC pharmacodynamic effect", x = "Time (days)", y = "Tumor growth inhibition effect") +
   theme_minimal()
 ```
+
+**Observation.** The Emax transformation is saturating: inhibition increases with
+concentration but cannot exceed `Emax`. As exposure decays, the pharmacodynamic effect
+also declines rather than remaining artificially constant.
 
 ## 6. Tumor Growth Inhibition (single representative patient)
 
@@ -146,6 +166,11 @@ ggplot(tgi_data, aes(x = time, y = SLD)) +
        x = "Time (days)", y = "Tumor size (SLD)") +
   theme_minimal()
 ```
+
+**Observation.** The representative trajectory initially reflects drug-driven tumor
+control, followed by renewed growth as single-dose exposure fades. This behavior is
+consistent with the model assumptions and motivates evaluating matched treated and
+untreated trajectories at population level.
 
 ## 7. Population simulation with individual PK variability
 
@@ -210,6 +235,11 @@ population_tgi %>%
   theme_minimal()
 ```
 
+**Population-level result.** Every patient now has a treated trajectory and a matched
+no-drug counterfactual generated from the same baseline burden and intrinsic growth
+rate. The paired construction isolates the modeled drug effect from between-patient
+heterogeneity.
+
 ## 8. Exposure-response analysis
 
 Individual ADC exposure is summarized using the analytical AUC formula for a
@@ -244,6 +274,10 @@ ggplot(exposure_response, aes(x = AUC, y = SLD60)) +
 **Interpretation.** A negative slope would indicate that higher ADC exposure is
 associated with stronger tumor inhibition at day 60 — the expected exposure-response
 relationship for an effective ADC.
+
+**Decision.** Day 60 is retained as the response landmark because every patient is
+represented on the common simulation grid. This association remains a simulation
+result, not a causal estimate from observed clinical data.
 
 ## 9. Linking tumor response to survival: a landmark analysis
 
@@ -297,12 +331,21 @@ ggsurvplot(km_fit, data = survival_comparison, risk.table = TRUE, pval = TRUE,
            title = "Post-landmark survival comparison: ADC vs. No ADC (from day-60 landmark)")
 ```
 
-## 10. Conclusion and limitations
+## 10. Conclusion, limitations, and decisions for the next notebooks
 
 This workflow demonstrates a complete, internally consistent PK/PD/TGI/survival chain:
 ADC pharmacokinetics determine drug concentration over time, which drives
 pharmacodynamic activity, which modifies tumor growth dynamics, which in turn is linked
 to survival through a shared hazard structure.
+
+**Decisions carried forward:**
+
+1. Replace the aggregate tumor by multiple lesions before applying RECIST.
+2. Derive PFS from the earliest progression or death event instead of simulating it
+   independently.
+3. Use repeated q3w dosing for the long follow-up comparison, since a single dose fades
+   too early to represent an oncology regimen.
+4. Preserve a no-ADC counterfactual arm under the same tumor and survival mechanisms.
 
 **Limitations, stated explicitly:**
 
