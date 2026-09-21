@@ -144,15 +144,16 @@ Survival is simulated via a Cox proportional hazards structure in which `g` is p
 |---|---|
 | 1: Two-stage | cor(g, g_hat) = 0.905 (95% CI 0.876--0.927), cor(d, d_hat) = 0.995 (95% CI 0.993--0.996); significant association with survival (p = 0.0238) |
 | 1: Joint model | Significant association (Assoct = 0.268, p = 0.0416), using a simplified linear tumor trajectory |
-| 3: PFS vs. OS (no drug) | Median PFS (36 weeks) shorter than median OS (52.3 weeks); PFS event rate 98.5% vs. 77% for OS |
-| 4: PFS, ADC vs. No ADC | p < 0.0001, favoring ADC |
-| 4: OS, ADC vs. No ADC | p = 0.021, favoring ADC (smaller effect than on PFS) |
+| 3: PFS vs. OS (no drug) | Median PFS (36 weeks) shorter than median OS (52.3 weeks); the 98.5% PFS event rate indicates endpoint saturation in this stress-test scenario |
+| 4: ADC vs. No ADC | PFS and OS estimates are computed during rendering; earlier fixed p-values were retired after correcting time integration and the OS mechanism |
 
 **Notebook 1 takeaway.** The joint model is more statistically rigorous than the two-stage approach, at the cost of a simplified representation of tumor dynamics, a genuine methodological trade-off, not a failure of either approach.
 
 **Notebook 3 takeaway.** PFS and OS are genuinely different clocks: progression is typically detected well before death, so PFS events accumulate faster than OS events in the same population.
 
-**Notebook 4 takeaway.** A repeated-dosing ADC regimen produces a clear, non-extreme treatment effect on both PFS and OS, with a more pronounced effect on PFS, consistent with real oncology trials, where progression is often more sensitive to treatment effect than overall survival (influenced by subsequent therapy lines and competing causes of death, not modeled here). An initial single-dose version of the PK model (as in notebook 2) produced an effect too transient to detect over a long follow-up window, motivating the switch to repeated dosing.
+**Notebook 4 takeaway.** The repeated-dosing scenario links current tumor burden to a
+time-varying survival hazard without using future measurements. Its numerical treatment
+effects are simulation outputs, not externally validated clinical estimates.
 
 ---
 
@@ -180,8 +181,13 @@ The landmark survival analysis in notebook 2 avoids immortal-time bias but disca
 **Lesion heterogeneity**
 Lesions (notebooks 3-4) are simulated as varying independently around patient-level parameters, a simplification of true inter-lesion heterogeneity; new lesion appearance (a RECIST progression criterion) is not modeled, only growth/shrinkage of existing lesions.
 
-**Emax calibration and dosing continuation**
-In notebook 4, `Emax` was calibrated empirically to produce a realistic, non-extreme treatment response range, rather than derived from a mechanistic or literature-based value. Dosing continues at fixed intervals regardless of detected progression, which would slightly overestimate treatment effect on OS for patients who progress before the end of follow-up; discontinuation at progression was left out as a deliberate scope decision (would require restructuring the simulation as a sequential loop).
+**Emax, survival, and dosing continuation**
+Notebook 4 explicitly uses a lower repeated-dose `Emax = 0.003`, rather than notebook
+2's single-dose value of `0.05`, because sustained q3w exposure otherwise suppresses
+progression almost completely. Daily rates are multiplied by the seven-day Euler step.
+OS uses current, not future, tumor burden in a time-varying prognostic hazard, and ADC
+effect stops at the first detected progression for the OS trajectory. Subsequent
+therapy, dose modifications, and toxicity-driven discontinuation remain outside scope.
 
 **Numerical integration**
 Euler integration (fixed time step) is used throughout for the TGI ODEs; a dedicated ODE solver (`deSolve`) would be the more standard implementation for more complex or stiffer models.

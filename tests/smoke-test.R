@@ -89,3 +89,49 @@ assert(dplyr::between(cor_d, 0.98, 1.00), "Reference correlation cor(d, d_hat) d
 assert(dplyr::between(cox_p_g, 0.015, 0.035), "Reference Cox p-value for g_hat drifted")
 
 message("Smoke test passed: notebook rendered and generated outputs are valid")
+
+# Notebook 04 regression test: this catches unit mistakes and future-information
+# leakage in the corrected repeated-dose model.
+source_notebook_04 <- normalizePath(
+  file.path("notebooks", "04_ADC_multi_lesion_PFS_OS.Rmd"),
+  mustWork = TRUE
+)
+notebook_04 <- file.path(work_dir, "04_ADC_multi_lesion_PFS_OS.Rmd")
+if (!file.copy(source_notebook_04, notebook_04, overwrite = TRUE)) {
+  stop("Could not copy notebook 04 into the isolated working directory", call. = FALSE)
+}
+
+message("Rendering notebook 04 in ", work_dir)
+render_environment_04 <- new.env(parent = globalenv())
+rendered_file_04 <- rmarkdown::render(
+  input = notebook_04,
+  output_file = "04_ADC_multi_lesion_PFS_OS.html",
+  output_dir = work_dir,
+  intermediates_dir = work_dir,
+  knit_root_dir = work_dir,
+  quiet = TRUE,
+  envir = render_environment_04
+)
+
+assert(file.exists(rendered_file_04), "Notebook 04 did not produce an HTML file")
+assert(identical(get("Emax", render_environment_04), 0.003), "Notebook 04 repeated-dose Emax changed unexpectedly")
+assert(exists("d_daily", get("lesions", render_environment_04)), "Notebook 04 does not use daily intrinsic regrowth")
+
+time_grid_04 <- get("time_grid", render_environment_04)
+trajectories_04 <- get("lesion_trajectories", render_environment_04)
+os_data_04 <- get("os_data", render_environment_04)
+prog_adc_04 <- get("prog_adc", render_environment_04)
+total_sld_for_os_04 <- get("total_sld_for_os", render_environment_04)
+
+assert(all(diff(time_grid_04) == 7), "Notebook 04 is expected to use a seven-day grid")
+assert(all(is.finite(trajectories_04$SLD_adc) & trajectories_04$SLD_adc >= 0), "Invalid ADC trajectories")
+assert(all(is.finite(trajectories_04$SLD_no_drug) & trajectories_04$SLD_no_drug >= 0), "Invalid no-drug trajectories")
+assert(nrow(os_data_04) == 2L * nrow(patients), "OS output must contain both arms for every patient")
+assert(nrow(total_sld_for_os_04) == length(time_grid_04) * nrow(patients), "Post-progression OS trajectories are incomplete")
+assert(any(prog_adc_04$progression_event == 1L), "Stop-at-progression logic was not exercised")
+assert(all(os_data_04$os_time %in% time_grid_04), "OS events must fall on the prospective time grid")
+assert(!exists("final_sld", envir = render_environment_04), "OS must not depend on future final tumor burden")
+assert(is.finite(get("pfs_p_value", render_environment_04)), "PFS log-rank result is invalid")
+assert(is.finite(get("os_p_value", render_environment_04)), "OS log-rank result is invalid")
+
+message("Smoke test passed: notebook 04 uses coherent units and prospective OS simulation")

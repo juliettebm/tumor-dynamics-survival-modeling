@@ -210,7 +210,9 @@ comparison_data %>%
 **Result.** Median PFS is **36 weeks**, earlier than median OS at **52.3 weeks**. The PFS
 event rate is **98.5%**, compared with **77%** for OS. This ordering is coherent with the
 composite definition: progression can occur before death and therefore adds earlier
-events.
+events. However, 98.5% represents endpoint saturation in this simulated 104-week
+stress-test scenario. It is not presented as a realistic clinical-trial event rate and
+it limits discrimination late in follow-up.
 
 ## 9. Conclusion, limitations, and decisions for Notebook 04
 
@@ -243,5 +245,6 @@ rather than an independently simulated hazard.
   noting.
 - New lesion appearance — one of the three RECIST progression criteria alongside target
   lesion growth — is not modeled here; only growth of existing target lesions is
-  considered.
+  considered. This is therefore a simplified target-lesion implementation, not complete
+  RECIST 1.1 adjudication.
 

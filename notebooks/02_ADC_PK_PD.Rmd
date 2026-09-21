@@ -70,12 +70,14 @@ a factor of 7. We convert it explicitly once, here:
 
 ```{r fix-units}
 patients <- patients %>%
-  mutate(g_daily = g / 7)
+  mutate(d_daily = d / 7)
 
-summary(patients$g_daily)
+summary(patients$d_daily)
 ```
 
-All growth terms in this notebook use `g_daily`, never the original weekly `g`.
+All intrinsic growth terms in this notebook use `d_daily`, never the original weekly
+`d`. In notebook 1, `g` describes treatment-associated regression whereas `d`
+describes regrowth; using `d` as untreated growth is therefore the coherent mapping.
 
 **Decision.** The converted variable is stored separately instead of overwriting `g`.
 This preserves the weekly source parameter for traceability and prevents an implicit
@@ -136,7 +138,7 @@ also declines rather than remaining artificially constant.
 
 ## 6. Tumor Growth Inhibition (single representative patient)
 
-$$\frac{dSLD}{dt} = g_{daily} \times SLD - Effect(t) \times SLD$$
+$$\frac{dSLD}{dt} = d_{daily} \times SLD - Effect(t) \times SLD$$
 
 The first term is intrinsic exponential growth; the second is drug-induced shrinkage.
 *Plasma ADC exposure is used here as a surrogate driver of pharmacodynamic activity in
@@ -146,7 +148,7 @@ declines, its effect fades and intrinsic growth eventually dominates again (sing
 scenario, no re-dosing).
 
 ```{r tgi-single-patient}
-g_daily_example <- 0.025 / 7
+d_daily_example <- 0.010 / 7
 SLD0_example <- 60
 
 tgi_data <- adc_pk
@@ -155,7 +157,7 @@ tgi_data$SLD[1] <- SLD0_example
 
 for (i in 2:nrow(tgi_data)) {
   dt <- tgi_data$time[i] - tgi_data$time[i - 1]
-  growth <- g_daily_example * tgi_data$SLD[i - 1]
+  growth <- d_daily_example * tgi_data$SLD[i - 1]
   drug_effect <- tgi_data$inhibition[i - 1] * tgi_data$SLD[i - 1]
   tgi_data$SLD[i] <- tgi_data$SLD[i - 1] + (growth - drug_effect) * dt
 }
@@ -175,7 +177,7 @@ untreated trajectories at population level.
 ## 7. Population simulation with individual PK variability
 
 Each patient is given their own elimination rate `kel_i` (log-normal, reflecting
-realistic inter-patient PK variability), and their own `g_daily` from Section 3. *For
+realistic inter-patient PK variability), and their own `d_daily` from Section 3. *For
 simplicity, inter-individual PK variability is introduced directly on `kel` rather than
 separately on clearance (CL) and volume of distribution (V), as would be done in a full
 population-PK model (`kel = CL/V`, with variability structured on `CL`).* For
@@ -195,7 +197,7 @@ patients <- patients %>%
 population_tgi <- data.frame()
 
 for (i in 1:nrow(patients)) {
-  g_i    <- patients$g_daily[i]
+  d_i    <- patients$d_daily[i]
   kel_i  <- patients$kel_i[i]
   SLD0_i <- patients$SLD0[i]
 
@@ -206,8 +208,11 @@ for (i in 1:nrow(patients)) {
   SLD_no_drug  <- numeric(length(time_grid)); SLD_no_drug[1] <- SLD0_i
 
   for (t in 2:length(time_grid)) {
-    SLD[t]         <- SLD[t - 1] + (g_i * SLD[t - 1] - inhibition[t - 1] * SLD[t - 1])
-    SLD_no_drug[t] <- SLD_no_drug[t - 1] + (g_i * SLD_no_drug[t - 1])  # pure growth, no drug
+    dt <- time_grid[t] - time_grid[t - 1]
+    SLD[t] <- SLD[t - 1] + dt *
+      (d_i * SLD[t - 1] - inhibition[t - 1] * SLD[t - 1])
+    SLD_no_drug[t] <- SLD_no_drug[t - 1] + dt *
+      (d_i * SLD_no_drug[t - 1])  # pure intrinsic regrowth, no drug
   }
 
   population_tgi <- bind_rows(

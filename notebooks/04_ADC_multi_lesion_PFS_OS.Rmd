@@ -25,10 +25,11 @@ progression detection built in notebook 3.
 - **Time scale**: this notebook works in **days** (as in notebook 2), extended to 728
   days (~104 weeks) to allow enough follow-up time for progression and death events, as
   in notebook 3.
-- **Growth model**: lesions here follow the simpler growth-minus-drug-effect structure
-  from notebook 2 (`dSLD/dt = g*SLD - Effect(t)*SLD`), not the biexponential model from
-  notebooks 1/3, since the drug-effect counterfactual logic was already validated on
-  this structure in notebook 2.
+- **Growth model**: lesions here follow a growth-minus-drug-effect structure
+  (`dSLD/dt = d*SLD - Effect(t)*SLD`). The `d` parameter from notebook 1 represents
+  intrinsic regrowth and is therefore used as the untreated growth rate. The `g`
+  parameter represented treatment-driven regression in notebook 1 and is not reused
+  as natural growth here.
   
 ```{r libraries}
 library(dplyr)
@@ -68,7 +69,10 @@ the underlying disease parameters.
 
 ## 3. Simulating multiple lesions per patient
 
-As in notebook 3, each patient has 5 to 10 individual lesions. Unlike notebook 3,lesions here do not carry a `d` (intrinsic regrowth) parameter, tumor regrowth in this notebook emerges solely from the ADC effect fading over time (Section 5), following the mechanism validated in notebook 2.
+As in notebook 3, each patient has 5 to 10 individual lesions. Each lesion carries an
+intrinsic regrowth parameter (`d_lesion`) inherited from the patient-level `d`, with
+lesion-specific variability. This prevents relapse from being attributed solely to
+loss of drug exposure.
 
 ```{r create-lesions}
 n_lesions_min <- 5
@@ -83,7 +87,7 @@ lesions <- patients %>%
     tibble(
       patient_id = pt$patient_id,
       lesion_id = 1:n_lesions,
-      g_lesion = pt$g * runif(n_lesions, 0.7, 1.3),
+      d_lesion = pt$d * runif(n_lesions, 0.7, 1.3),
       SLD0_lesion = (pt$SLD0 / n_lesions) * runif(n_lesions, 0.7, 1.3)
     )
   }) %>%
@@ -98,16 +102,25 @@ growth are shared within patient.
 
 ## 4. Applying PK/PD: repeated dosing, one drug exposure profile per patient
 
-Real ADC regimens involve repeated administration (typically every 21 days), not a single dose. We model plasma concentration using the superposition principle: total concentration at any time is the sum of contributions from all doses already administered, each decaying independently from its own injection time. This produces the characteristic sawtooth accumulation pattern of repeated dosing, and sustains drug exposure, and therefore pharmacodynamic effect, over a much longer period than a single injection would. Because repeated dosing itself now sustains the effect, we revert `Emax` and `kel` to the same realistic values used in notebook 2, rather than artificially inflating them.
+Real ADC regimens involve repeated administration (typically every 21 days), not a
+single dose. We model plasma concentration using the superposition principle: total
+concentration at any time is the sum of contributions from all doses already
+administered, each decaying independently from its own injection time. This produces
+the characteristic sawtooth accumulation pattern of repeated dosing. For internal
+consistency, `EC50 = 1` and the population elimination rate are retained from notebook
+2. `Emax = 0.003` is deliberately lower than notebook 2's single-dose value of `0.05`:
+repeated q3w administration sustains exposure, so copying the single-dose `Emax`
+produces near-complete, unrealistic progression suppression. This is an empirical
+scenario calibration, not a clinically estimated ADC parameter.
 
 ```{r pk-pd-setup}
 lesions <- lesions %>%
-  mutate(g_daily = g_lesion / 7)
+  mutate(d_daily = d_lesion / 7)
 
 dose <- 5     # mg/kg
 V    <- 3     # L/kg
 EC50 <- 1
-Emax <- 0.003
+Emax <- 0.003  # lower than notebook 2 because exposure is sustained by repeated dosing
 
 patients <- patients %>%
   mutate(kel_i = rlnorm(n(), meanlog = log(0.05), sdlog = 0.20))
@@ -149,7 +162,7 @@ lesion_trajectories <- data.frame()
 
 for (i in 1:nrow(lesions)) {
   pid    <- lesions$patient_id[i]
-  g_i    <- lesions$g_daily[i]
+  d_i    <- lesions$d_daily[i]
   SLD0_i <- lesions$SLD0_lesion[i]
 
   inhibition <- patient_pkpd$inhibition[patient_pkpd$patient_id == pid]
@@ -158,8 +171,16 @@ for (i in 1:nrow(lesions)) {
   SLD_no_drug <- numeric(length(time_grid)); SLD_no_drug[1] <- SLD0_i
 
   for (t in 2:length(time_grid)) {
-    SLD_adc[t]     <- SLD_adc[t - 1] + (g_i * SLD_adc[t - 1] - inhibition[t - 1] * SLD_adc[t - 1])
-    SLD_no_drug[t] <- SLD_no_drug[t - 1] + (g_i * SLD_no_drug[t - 1])
+    dt <- time_grid[t] - time_grid[t - 1]
+    SLD_adc[t] <- SLD_adc[t - 1] + dt *
+      (d_i * SLD_adc[t - 1] - inhibition[t - 1] * SLD_adc[t - 1])
+    SLD_no_drug[t] <- SLD_no_drug[t - 1] + dt *
+      (d_i * SLD_no_drug[t - 1])
+
+    # Euler's method can become non-physical under extreme parameter combinations.
+    if (!is.finite(SLD_adc[t]) || SLD_adc[t] < 0) {
+      stop("Invalid ADC tumor size; reduce the integration step", call. = FALSE)
+    }
   }
 
   lesion_trajectories <- bind_rows(
@@ -213,32 +234,89 @@ one arm’s nadir for the other would invalidate the comparison because treatmen
 both the minimum burden and the subsequent relative increase.
 ## 8. Constructing PFS and OS for both arms
 
-For each arm, we extract the first time of RECIST progression (as in notebook 3, Section 6). For OS, we reuse the landmark-based counterfactual hazard approach validated in notebook 2: both arms share the same hazard structure, differing only in the tumor burden (at the last observed time point) that feeds into it, ensuring a fair comparison, not two unrelated survival models.
+For each arm, we extract the first time of RECIST progression. For OS, death is simulated
+interval by interval from a hazard that depends on tumor burden at the **start** of that
+interval. Thus an event at time `t` can only depend on information available before
+`t`; the former use of tumor burden at day 728 to simulate death from day 0 has been
+removed. This remains a prognostic association model, not a causal biological model.
 
 ```{r construct-pfs-both-arms}
 prog_adc <- extract_progression_times(recist_adc)
 prog_no_drug <- extract_progression_times(recist_no_drug)
 
-# Final tumor burden per arm (last observed time point), used as the OS prognostic biomarker
-final_sld <- total_sld_by_arm %>%
-  filter(time == max(time)) %>%
-  select(patient_id, SLD_total_adc, SLD_total_no_drug)
+# Recompute the treated trajectory used for OS with treatment stopped at the first
+# detected progression. The pre-progression path, and therefore PFS, is unchanged.
+progression_lookup <- setNames(prog_adc$progression_time, prog_adc$patient_id)
+lesion_trajectories_os <- data.frame()
 
-baseline_hazard <- 0.002
+for (i in 1:nrow(lesions)) {
+  pid <- lesions$patient_id[i]
+  d_i <- lesions$d_daily[i]
+  progression_time_i <- progression_lookup[as.character(pid)]
+  if (is.na(progression_time_i)) progression_time_i <- Inf
+  inhibition <- patient_pkpd$inhibition[patient_pkpd$patient_id == pid]
+
+  SLD_adc_os <- numeric(length(time_grid))
+  SLD_adc_os[1] <- lesions$SLD0_lesion[i]
+
+  for (t in 2:length(time_grid)) {
+    dt <- time_grid[t] - time_grid[t - 1]
+    active_inhibition <- if (time_grid[t - 1] < progression_time_i) inhibition[t - 1] else 0
+    SLD_adc_os[t] <- SLD_adc_os[t - 1] + dt *
+      (d_i * SLD_adc_os[t - 1] - active_inhibition * SLD_adc_os[t - 1])
+  }
+
+  lesion_trajectories_os <- bind_rows(
+    lesion_trajectories_os,
+    data.frame(patient_id = pid, lesion_id = lesions$lesion_id[i],
+               time = time_grid, SLD_adc_os = SLD_adc_os)
+  )
+}
+
+total_sld_for_os <- total_sld_by_arm %>%
+  select(patient_id, time, SLD_total_no_drug) %>%
+  left_join(
+    lesion_trajectories_os %>%
+      group_by(patient_id, time) %>%
+      summarise(SLD_total_adc = sum(SLD_adc_os), .groups = "drop"),
+    by = c("patient_id", "time")
+  )
+
+baseline_hazard <- 0.002  # per day
 beta_SLD <- 0.01
-pooled_mean_sld <- mean(c(final_sld$SLD_total_adc, final_sld$SLD_total_no_drug))
+reference_sld <- mean(total_sld_for_os$SLD_total_adc[total_sld_for_os$time == 0])
+
+simulate_time_varying_os <- function(data, sld_column, arm_label) {
+  patient_paths <- split(data[order(data$patient_id, data$time), ], data$patient_id)
+
+  bind_rows(lapply(patient_paths, function(path) {
+    event_time <- max(path$time)
+    event <- 0L
+
+    for (j in 2:nrow(path)) {
+      dt <- path$time[j] - path$time[j - 1]
+      current_sld <- path[[sld_column]][j - 1]
+      hazard <- baseline_hazard * exp(beta_SLD * (current_sld - reference_sld))
+      event_probability <- 1 - exp(-hazard * dt)
+
+      if (runif(1) < event_probability) {
+        event_time <- path$time[j]
+        event <- 1L
+        break
+      }
+    }
+
+    tibble(
+      patient_id = path$patient_id[1], arm = arm_label,
+      os_time = event_time, os_event = event
+    )
+  }))
+}
 
 os_data <- bind_rows(
-  final_sld %>% transmute(patient_id, SLD_used = SLD_total_adc, arm = "ADC"),
-  final_sld %>% transmute(patient_id, SLD_used = SLD_total_no_drug, arm = "No ADC")
-) %>%
-  mutate(
-    hazard = baseline_hazard * exp(beta_SLD * (SLD_used - pooled_mean_sld)),
-    event_time = rexp(n(), rate = hazard),
-    admin_censoring = 728,
-    os_time = pmin(event_time, admin_censoring),
-    os_event = as.integer(event_time <= admin_censoring)
-  )
+  simulate_time_varying_os(total_sld_for_os, "SLD_total_adc", "ADC"),
+  simulate_time_varying_os(total_sld_for_os, "SLD_total_no_drug", "No ADC")
+)
 
 pfs_data_adc <- prog_adc %>%
   left_join(os_data %>% filter(arm == "ADC") %>% select(patient_id, os_time, os_event), by = "patient_id") %>%
@@ -284,6 +362,12 @@ ggsurvplot(km_os, data = pfs_data_combined, risk.table = TRUE, pval = TRUE,
            xlab = "Time (days)", ylab = "Overall survival probability",
            title = "OS: ADC vs. No ADC", legend.title = "Arm")
 
+pfs_logrank <- survdiff(Surv(pfs_time, pfs_event) ~ arm, data = pfs_data_combined)
+os_logrank <- survdiff(Surv(os_time, os_event) ~ arm, data = pfs_data_combined)
+pfs_p_value <- pchisq(pfs_logrank$chisq, df = 1, lower.tail = FALSE)
+os_p_value <- pchisq(os_logrank$chisq, df = 1, lower.tail = FALSE)
+c(PFS_logrank_p = pfs_p_value, OS_logrank_p = os_p_value)
+
 pfs_data_combined %>%
   group_by(arm) %>%
   summarise(median_pfs = median(pfs_time), median_os = median(os_time),
@@ -291,22 +375,21 @@ pfs_data_combined %>%
 pfs_data_combined %>% filter(arm == "ADC") %>% summarise(never_progressed = mean(progression_event == 0))
 ```
 
-**Result and interpretation.** The simulated ADC improves both endpoints relative to
-the no-ADC counterfactual: the log-rank results are **p < 0.0001 for PFS** and **p =
-0.021 for OS**. The larger separation for PFS is consistent with the model structure,
-where treatment acts directly on tumor burden and RECIST progression. These p-values
-describe the calibrated simulation and are not clinical evidence for a real product.
+**Result and interpretation.** The table, curves, and computed `PFS_logrank_p` and
+`OS_logrank_p` above are the authoritative results for this version of the model.
+Historical p-values are not retained in prose because correcting the integration step,
+growth parameter, and OS mechanism changes the generated endpoints. Any observed
+separation describes one seeded simulation and is not clinical evidence for a product.
 
 ## 10. General conclusion, limitations, and next decisions
 
 This notebook connects the two previously separate strands of the project: the
 multi-lesion RECIST framework (notebook 3) and the ADC PK/PD mechanism (notebook 2),
 extended here to repeated q3w dosing via the pharmacokinetic superposition principle.
-The calibrated model shows a clear, non-trivial treatment effect on both PFS
-(p < 0.0001) and OS (p = 0.021), with a more pronounced effect on PFS than OS — a
-pattern consistent with real oncology trials, where progression is often more
-sensitive to treatment effect than overall survival, which is influenced by
-subsequent lines of therapy and competing causes of death not modeled here.
+The corrected model estimates treatment contrasts for both PFS and OS without using a
+future tumor measurement to generate earlier deaths. Their magnitude and significance
+must be read from the executed notebook rather than from previously calibrated,
+now-obsolete values.
 
 Across the four notebooks, the project now provides one traceable chain from simulated
 patient heterogeneity to longitudinal tumor dynamics, ADC exposure, lesion-level
@@ -318,8 +401,8 @@ same-source counterfactuals remain unsuitable for clinical-effect claims.
 
 1. Replace empirically calibrated PD and hazard parameters with literature-based or
    estimated values and document parameter uncertainty.
-2. Stop or switch treatment after progression and model dose delays, reductions, and
-   discontinuations.
+2. Extend the implemented stop-at-progression rule to model subsequent therapy, dose
+   delays, reductions, and toxicity-driven discontinuations.
 3. Add new-lesion progression and non-target disease to the RECIST implementation.
 4. Run repeated simulation scenarios and report uncertainty intervals for treatment
    effects instead of a single seeded realization.
@@ -328,24 +411,20 @@ same-source counterfactuals remain unsuitable for clinical-effect claims.
 
 **Limitations, stated explicitly:**
 
-- `Emax` was calibrated empirically (by iterative adjustment) rather than derived from
-  a mechanistic or literature-based value, specifically to produce a realistic range of
-  treatment response (neither near-0% nor near-100% non-progression) — a pragmatic
-  choice made transparent here rather than presented as a validated estimate. An
-  initial single-dose version of this model (as in notebook 2) produced a treatment
-  effect that faded well before the end of follow-up, diluting any detectable impact on
-  PFS/OS over a long observation window — motivating the repeated-dosing structure used
-  here.
-- Dosing continues at fixed q3w intervals throughout the full follow-up window,
-  regardless of whether RECIST progression has already been detected — in reality,
-  treatment is typically discontinued or switched at progression. Implementing this
-  would require restructuring the simulation as a sequential, day-by-day loop per
-  patient (checking progression status before administering each new dose), rather
-  than the current vectorized approach that computes the full dosing schedule upfront.
-  This was left out as a deliberate scope decision: since PFS is already determined at
-  the moment of progression itself, the main effect of this simplification would be a
-  slight overestimation of drug exposure — and therefore treatment effect — on OS
-  specifically, for the subset of patients who progress before the end of follow-up.
+- `Emax = 0.003` is an empirical repeated-dose scenario calibration and intentionally
+  differs from notebook 2's single-dose value (`0.05`). Repeated q3w exposure made the
+  larger value suppress progression almost completely. Neither value is a
+  literature-derived or fitted ADC estimate.
+- Euler updates explicitly multiply daily rates by the seven-day grid interval. A
+  smaller integration grid or validated ODE solver remains preferable for numerical
+  sensitivity analysis.
+- OS uses a piecewise-constant, time-varying hazard based on tumor burden known at the
+  beginning of each interval. Tumor burden is a simulated prognostic biomarker here;
+  this association is not evidence that changing tumor size causally changes survival.
+- For the OS trajectory, ADC effect stops at the first progression detected on the
+  weekly grid. This avoids attributing continued post-progression benefit to the study
+  treatment. Subsequent therapy, delayed discontinuation, dose modification, and
+  toxicity-driven stopping are still not modeled.
 - As in notebook 3, new lesion appearance is not modeled; only growth/shrinkage of
   existing target lesions is considered.
 - As in notebook 2, all patients follow the same fixed q3w schedule; real-world
