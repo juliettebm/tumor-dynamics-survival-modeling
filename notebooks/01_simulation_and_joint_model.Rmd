@@ -25,7 +25,9 @@ understanding before applying the same logic to real datasets.
 
 ### The Tumor Growth Inhibition (TGI) model
 
-We use the biexponential TGI model (Wang et al., *Clin Pharmacol Ther*, 2009):
+We use a simplified biexponential TGI model inspired by the regression/regrowth
+framework of Wang et al. (*Clin Pharmacol Ther*, 2009; doi:10.1038/clpt.2009.64),
+rather than an exact reproduction of that publication:
 
 $$SLD(t) = SLD_0 \times (e^{-g \cdot t} + e^{d \cdot t} - 1)$$
 
@@ -42,7 +44,10 @@ library(nlme)
 library(dplyr)
 library(ggplot2)
 
-set.seed(42)
+project_root <- Sys.getenv("TUMOR_PROJECT_ROOT", unset = "..")
+source(file.path(project_root, "R", "config.R"))
+source(file.path(project_root, "R", "metrics.R"))
+set_project_seed()
 ```
 
 ## 2. Simulating "true" individual patient parameters
@@ -176,8 +181,12 @@ analysis_data <- patients %>%
 cox_model <- coxph(Surv(os_time, os_event) ~ g_hat + d_hat, data = analysis_data)
 summary(cox_model)
 
-cor(analysis_data$g, analysis_data$g_hat)
-cor(analysis_data$d, analysis_data$d_hat)
+cor_g <- cor(analysis_data$g, analysis_data$g_hat)
+cor_d <- cor(analysis_data$d, analysis_data$d_hat)
+cor_g
+correlation_ci(cor_g, nrow(analysis_data))
+cor_d
+correlation_ci(cor_d, nrow(analysis_data))
 ```
 
 ```{r two-stage-plot}
@@ -189,8 +198,9 @@ ggplot(analysis_data, aes(x = g, y = g_hat)) +
 ```
 
 **Interpretation.** `g_hat` and `d_hat` recover the true parameters well (correlations
-of 0.83 and 0.99 respectively), and the Cox model detects a significant association
-between `g_hat` and survival (p = 0.007), consistent with the true simulated effect
+of 0.905 and 0.995 respectively; Fisher 95% CIs 0.876--0.927 and 0.993--0.996).
+The Cox model detects a significant association between `g_hat` and survival
+(p = 0.0238), consistent with the true simulated effect
 (`beta_g = -15`).
 
 The two-stage approach, however, has a structural limitation: it treats parameter
@@ -234,16 +244,16 @@ summary(fit_joint)
 ```
 
 **Interpretation.** The association parameter ("Assoct") quantifies the link between
-the current value of the longitudinal trajectory and the hazard. Here, `Assoct ≈ 0.235`
-(p ≈ 0.056): a higher current `log(SLD)` is associated with increased hazard, in the
-biologically expected direction, though only borderline significant.
+the current value of the longitudinal trajectory and the hazard. Here, `Assoct = 0.268`
+(p = 0.0416): a higher current `log(SLD)` is associated with increased hazard, in the
+biologically expected direction.
 
 ## 7. Two-stage vs. joint model: an honest comparison
 
 | Approach | Signal detected | Model complexity | Trade-off |
 |---|---|---|---|
-| Two-stage | Significant (p = 0.007) on `g_hat` | Rich (two biological rate parameters, g and d) | Ignores estimation uncertainty of g_hat/d_hat |
-| Joint model | Borderline (p = 0.056) | Simplified (single linear trend) | Statistically more rigorous, but coarser biological representation |
+| Two-stage | Significant (p = 0.0238) on `g_hat` | Rich (two biological rate parameters, g and d) | Ignores estimation uncertainty of g_hat/d_hat |
+| Joint model | Significant (p = 0.0416) | Simplified (single linear trend) | Statistically more rigorous, but coarser biological representation |
 
 The joint model is not "worse" — it is more conservative because it properly accounts
 for trajectory uncertainty, using a deliberately simplified tumor dynamics

@@ -36,7 +36,11 @@ library(ggplot2)
 library(survival)
 library(survminer)
 
-set.seed(42)
+project_root <- Sys.getenv("TUMOR_PROJECT_ROOT", unset = "..")
+source(file.path(project_root, "R", "config.R"))
+source(file.path(project_root, "R", "pk_pd.R"))
+source(file.path(project_root, "R", "recist.R"))
+set_project_seed()
 ```  
 
 ## 2. Loading the simulated population
@@ -100,20 +104,12 @@ time_grid <- seq(0, 728, by = 7)  # days, weekly scans over ~104 weeks
 dosing_interval <- 21  # days, typical q3w ADC regimen
 dosing_times <- seq(0, 728, by = dosing_interval)
 
-compute_concentration <- function(t_vec, kel, dosing_times, dose, V) {
-  sapply(t_vec, function(t) {
-    active_doses <- dosing_times[dosing_times <= t]
-    if (length(active_doses) == 0) return(0)
-    sum((dose / V) * exp(-kel * (t - active_doses)))
-  })
-}
-
 patient_pkpd <- patients %>%
   rowwise() %>%
   do({
     pt <- .
-    conc <- compute_concentration(time_grid, pt$kel_i, dosing_times, dose, V)
-    inhibition <- Emax * conc / (EC50 + conc)
+    conc <- repeated_dose_concentration(time_grid, pt$kel_i, dosing_times, dose, V)
+    inhibition <- emax_effect(conc, Emax, EC50)
     tibble(patient_id = pt$patient_id, time = time_grid, concentration = conc, inhibition = inhibition)
   }) %>%
   ungroup()
@@ -175,22 +171,12 @@ head(total_sld_by_arm, 10)
 ```
 ## 7. Detecting RECIST progression on both arms
 
-We apply the same RECIST 1.1 progression rule from notebook 3 (≥20% increase from nadir AND ≥5mm absolute increase) independently to each arm, since the two arms represent two different counterfactual disease courses for the same patient.
+We apply the same simplified target-lesion component of the RECIST 1.1 progression rule
+from notebook 3 (Eisenhauer et al., 2009; doi:10.1016/j.ejca.2008.10.026): ≥20% increase
+from nadir AND ≥5mm absolute increase. It is evaluated independently in each arm because
+the arms represent different counterfactual disease courses for the same patient.
 
 ```{r detect-progression-both-arms}
-detect_progression <- function(data, sld_column) {
-  data %>%
-    group_by(patient_id) %>%
-    arrange(time, .by_group = TRUE) %>%
-    mutate(
-      nadir = cummin(.data[[sld_column]]),
-      relative_increase = (.data[[sld_column]] - nadir) / nadir,
-      absolute_increase = .data[[sld_column]] - nadir,
-      is_progression = relative_increase >= 0.20 & absolute_increase >= 5
-    ) %>%
-    ungroup()
-}
-
 recist_adc <- detect_progression(total_sld_by_arm, "SLD_total_adc")
 recist_no_drug <- detect_progression(total_sld_by_arm, "SLD_total_no_drug")
 
@@ -201,17 +187,6 @@ head(recist_adc %>% select(patient_id, time, SLD_total_adc, nadir, is_progressio
 For each arm, we extract the first time of RECIST progression (as in notebook 3, Section 6). For OS, we reuse the landmark-based counterfactual hazard approach validated in notebook 2: both arms share the same hazard structure, differing only in the tumor burden (at the last observed time point) that feeds into it, ensuring a fair comparison, not two unrelated survival models.
 
 ```{r construct-pfs-both-arms}
-extract_progression_times <- function(recist_df) {
-  recist_df %>%
-    group_by(patient_id) %>%
-    summarise(
-      progression_time = if (any(is_progression)) min(time[is_progression]) else NA_real_,
-      progression_event = as.integer(any(is_progression)),
-      last_observed_time = max(time),
-      .groups = "drop"
-    )
-}
-
 prog_adc <- extract_progression_times(recist_adc)
 prog_no_drug <- extract_progression_times(recist_no_drug)
 

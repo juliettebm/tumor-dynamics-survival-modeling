@@ -11,7 +11,11 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 ## 1. Motivation
 
-Notebooks 1 and 2 modeled a single aggregate tumor size (SLD) per patient. In reality, RECIST criteria are based on the **sum** of several individually measured target lesions (up to 5), each of which may respond differently to treatment even within the same patient. This notebook extends the framework by:
+Notebooks 1 and 2 modeled a single aggregate tumor size (SLD) per patient. In reality,
+RECIST 1.1 (Eisenhauer et al., 2009; doi:10.1016/j.ejca.2008.10.026) criteria are based
+on the **sum** of individually measured target lesions (up to 5 in total and up to 2 per
+organ), each of which may respond differently to treatment even within the same patient.
+This notebook implements only the target-lesion component and extends the framework by:
 
   - simulating multiple individual lesions per patient,
   - deriving total SLD as their sum,
@@ -25,7 +29,10 @@ library(ggplot2)
 library(survival)
 library(survminer)
 
-set.seed(42)
+project_root <- Sys.getenv("TUMOR_PROJECT_ROOT", unset = "..")
+source(file.path(project_root, "R", "config.R"))
+source(file.path(project_root, "R", "recist.R"))
+set_project_seed()
 ```
 
 ## 2. Loading the simulated population
@@ -114,16 +121,7 @@ Progression is declared the first time both RECIST conditions are met simultaneo
 from nadir, and at least a 5mm absolute increase from nadir.
 
 ```{r detect-progression}
-recist_data <- total_sld %>%
-  group_by(patient_id) %>%
-  arrange(time, .by_group = TRUE) %>%
-  mutate(
-    nadir = cummin(SLD_total),
-    relative_increase = (SLD_total - nadir) / nadir,
-    absolute_increase = SLD_total - nadir,
-    is_progression = relative_increase >= 0.20 & absolute_increase >= 5
-  ) %>%
-  ungroup()
+recist_data <- detect_progression(total_sld, "SLD_total")
 
 head(recist_data, 12)
 recist_data %>% filter(patient_id == 4) %>% select(time, SLD_total, nadir, relative_increase, absolute_increase, is_progression)
@@ -135,14 +133,7 @@ For each patient, we identify the first time point at which RECIST progression i
 are treated as censored for progression at their last observed time point.
 
 ```{r extract-progression-times}
-progression_times <- recist_data %>%
-  group_by(patient_id) %>%
-  summarise(
-    progression_time = if (any(is_progression)) min(time[is_progression]) else NA_real_,
-    progression_event = as.integer(any(is_progression)),
-    last_observed_time = max(time),
-    .groups = "drop"
-  )
+progression_times <- extract_progression_times(recist_data)
 
 head(progression_times, 10)
 cat("Number of patients with RECIST progression detected:", sum(progression_times$progression_event), "out of", nrow(progression_times), "\n")

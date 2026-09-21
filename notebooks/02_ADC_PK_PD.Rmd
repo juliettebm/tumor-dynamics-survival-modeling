@@ -31,7 +31,9 @@ library(ggplot2)
 library(survival)
 library(survminer)
 
-set.seed(42)
+project_root <- Sys.getenv("TUMOR_PROJECT_ROOT", unset = "..")
+source(file.path(project_root, "R", "config.R"))
+set_project_seed()
 ```
 
 ## 2. Loading the simulated population

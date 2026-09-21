@@ -2,6 +2,8 @@
 
 [![Data](https://img.shields.io/badge/Data-Fully%20Simulated-blue)](.)
 [![R](https://img.shields.io/badge/R-4.x-blue?logo=r&logoColor=white)](https://www.r-project.org/)
+[![Smoke test](https://github.com/juliettebm/tumor-dynamics-survival-modeling/actions/workflows/smoke-test.yaml/badge.svg)](https://github.com/juliettebm/tumor-dynamics-survival-modeling/actions/workflows/smoke-test.yaml)
+[![Reproducibility](https://img.shields.io/badge/reproducibility-renv%20locked-success)](renv.lock)
 [![Survival](https://img.shields.io/badge/survival-JM%20%7C%20Cox-orange)](https://cran.r-project.org/package=survival)
 [![nlme](https://img.shields.io/badge/nlme-minpack.lm-lightgrey)](https://cran.r-project.org/package=nlme)
 
@@ -43,6 +45,11 @@ The notebooks form a coherent progression:
 - **Notebook 3**: multi-lesion RECIST-based PFS vs. OS (no drug mechanism)
 - **Notebook 4**: multi-lesion RECIST framework combined with repeated-dosing ADC PK/PD, comparing PFS and OS between treated and untreated arms
 
+Reusable logic is kept in `R/` (`config.R`, `recist.R`, `pk_pd.R`, and
+`metrics.R`), while the R Markdown files remain executable analytical reports.
+`results/key_results.psv` links every headline README result to its notebook or
+rendered-report source, and the CI fails if either side drifts.
+
 ---
 
 ## Reproduce
@@ -54,11 +61,14 @@ git clone https://github.com/juliettebm/tumor-dynamics-survival-modeling.git
 cd tumor-dynamics-survival-modeling
 ```
 
-### 2. Install dependencies
+### 2. Restore the reproducible R environment
 
 ```r
-install.packages(c("minpack.lm", "survival", "survminer", "nlme", "JM", "dplyr", "tidyr", "ggplot2"))
+install.packages("renv")
+renv::restore()
 ```
+
+The lockfile targets R 4.4.1 and pins the direct dependencies used by the notebooks.
 
 ### 3. Run the notebooks in order
 
@@ -67,6 +77,23 @@ Notebook `01` simulates the patient cohort and writes `patients_final.rds` and `
 ```r
 rmarkdown::render("notebooks/01_simulation_and_joint_model.Rmd")
 ```
+
+### Automated smoke test
+
+The GitHub Actions workflow renders notebook `01` on every push and pull request. It
+uses an isolated temporary directory and verifies that the HTML report and both RDS
+outputs are created, have the expected schemas, and contain plausible simulated data.
+Before rendering, it also unit-tests the reusable RECIST, PK/PD and uncertainty
+helpers and validates the README/result contract.
+Run the same check locally from the repository root with:
+
+```bash
+Rscript tests/smoke-test.R
+```
+
+The simulation seed is defined once in `R/config.R`. Every notebook calls
+`set_project_seed()` at startup. Changing `PROJECT_SEED` is therefore an explicit,
+reviewable change affecting all stochastic results.
 
 ---
 
@@ -92,7 +119,9 @@ Combines the multi-lesion RECIST framework (notebook 3) with the ADC PK/PD mecha
 
 ## Models
 
-**Notebook 1**: Tumor growth inhibition (TGI) biexponential model (Wang et al., 2009):
+**Notebook 1**: simplified biexponential tumor growth inhibition (TGI) model, inspired
+by the regression/regrowth framework of Wang et al. (2009), rather than an exact
+reproduction of that publication:
 SLD(t) = SLD0 * (exp(-gt) + exp(dt) - 1)
 
 - **g**: tumor regression rate (treatment effect)
@@ -113,8 +142,8 @@ Survival is simulated via a Cox proportional hazards structure in which `g` is p
 
 | Notebook | Result |
 |---|---|
-| 1: Two-stage | cor(g, g_hat) = 0.83, cor(d, d_hat) = 0.99; significant association with survival (p = 0.007) |
-| 1: Joint model | Borderline association (p = 0.056), using a simplified linear tumor trajectory |
+| 1: Two-stage | cor(g, g_hat) = 0.905 (95% CI 0.876--0.927), cor(d, d_hat) = 0.995 (95% CI 0.993--0.996); significant association with survival (p = 0.0238) |
+| 1: Joint model | Significant association (Assoct = 0.268, p = 0.0416), using a simplified linear tumor trajectory |
 | 3: PFS vs. OS (no drug) | Median PFS (36 weeks) shorter than median OS (52.3 weeks); PFS event rate 98.5% vs. 77% for OS |
 | 4: PFS, ADC vs. No ADC | p < 0.0001, favoring ADC |
 | 4: OS, ADC vs. No ADC | p = 0.021, favoring ADC (smaller effect than on PFS) |
@@ -131,6 +160,16 @@ Survival is simulated via a Cox proportional hazards structure in which `g` is p
 
 **Two-stage estimation uncertainty**
 The two-stage approach (notebook 1) ignores estimation uncertainty when parameters are reused as fixed covariates; the joint model addresses this but uses a simplified linear tumor trajectory instead of the full biexponential model.
+The notebook now reports Fisher-transformation 95% confidence intervals for both
+true-versus-estimated parameter correlations. These intervals quantify sampling
+uncertainty across simulated patients, but do not repair the two-stage uncertainty
+propagation problem described above.
+
+**Calibration is not applicable**
+This repository does not train a probabilistic classifier or publish individual risk
+probabilities. Calibration curves and Brier scores would therefore be inappropriate;
+the relevant uncertainty outputs are confidence intervals, Cox-model uncertainty and
+the comparison with a joint longitudinal-survival model.
 
 **Surrogate PK/PD driver**
 The notebook 2 TGI model uses plasma ADC exposure as a *surrogate* driver of pharmacodynamic activity, a simplification of the real ADC mechanism (tumor distribution, internalization, payload release), and originally assumed a single dose with no re-dosing (addressed in notebook 4).
@@ -152,6 +191,19 @@ Euler integration (fixed time step) is used throughout for the TGI ODEs; a dedic
 ## Disclaimer
 
 This project is for **educational purposes only**, using fully simulated data. It is a self-taught methodological exercise and is **not a replication of any industry model or a clinical tool**.
+
+For the concrete steps required before applying this workflow to patient data, see
+[`From simulated data to clinical data`](docs/FROM_SIMULATION_TO_CLINICAL_DATA.md).
+
+## References
+
+Full citations and DOI links for the TGI models, RECIST 1.1, joint modeling, PK/PD, and
+landmark survival analysis are provided in [`REFERENCES.md`](REFERENCES.md). In
+particular, the tumor-dynamics examples are motivated by Wang et al.
+([doi:10.1038/clpt.2009.64](https://doi.org/10.1038/clpt.2009.64)) and Claret et al.
+([doi:10.1200/JCO.2008.21.0807](https://doi.org/10.1200/JCO.2008.21.0807)); progression
+uses the simplified target-lesion component of RECIST 1.1 from Eisenhauer et al.
+([doi:10.1016/j.ejca.2008.10.026](https://doi.org/10.1016/j.ejca.2008.10.026)).
 
 ---
 

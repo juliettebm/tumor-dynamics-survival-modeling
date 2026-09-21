@@ -5,6 +5,13 @@
 .Rproj.user/
 *.Rproj
 
+# renv local state (renv.lock remains versioned)
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+.r-library*/
+
 # RMarkdown / knitr artifacts
 *_cache/
 *_files/
