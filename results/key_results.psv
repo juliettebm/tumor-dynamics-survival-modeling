@@ -3,7 +3,6 @@ notebooks/01_simulation_and_joint_model.Rmd|of 0.905 and 0.995 respectively|cor(
 notebooks/01_simulation_and_joint_model.Rmd|(p = 0.0238), consistent|significant association with survival (p = 0.0238)
 notebooks/01_simulation_and_joint_model.Rmd|`Assoct = 0.268`|Assoct = 0.268
 notebooks/01_simulation_and_joint_model.Rmd|(p = 0.0416): a higher|p = 0.0416
-notebooks/03_multi_lesion_RECIST_PFS.html|## 1 OS              52.3      0.77|Median PFS (36 weeks) shorter than median OS (52.3 weeks); PFS event rate 98.5% vs. 77% for OS
-notebooks/03_multi_lesion_RECIST_PFS.html|## 2 PFS             36        0.985|Median PFS (36 weeks) shorter than median OS (52.3 weeks); PFS event rate 98.5% vs. 77% for OS
-notebooks/04_ADC_multi_lesion_PFS_OS.Rmd|(p < 0.0001) and OS (p = 0.021)|p < 0.0001, favoring ADC
-notebooks/04_ADC_multi_lesion_PFS_OS.Rmd|(p < 0.0001) and OS (p = 0.021)|p = 0.021, favoring ADC (smaller effect than on PFS)
+notebooks/03_multi_lesion_RECIST_PFS.html|## 1 OS              46.2      0.725|Median PFS (30 weeks) shorter than median OS (46.2 weeks)
+notebooks/03_multi_lesion_RECIST_PFS.html|## 2 PFS             30        0.945|Median PFS (30 weeks) shorter than median OS (46.2 weeks)
+notebooks/04_ADC_multi_lesion_PFS_OS.Rmd|`Emax = 0.003` is an empirical repeated-dose scenario calibration|Notebook 4 explicitly uses a lower repeated-dose `Emax = 0.003`

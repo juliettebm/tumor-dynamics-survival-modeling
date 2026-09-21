@@ -15,7 +15,7 @@ Notebooks 1 and 2 modeled a single aggregate tumor size (SLD) per patient. In re
 RECIST 1.1 (Eisenhauer et al., 2009; doi:10.1016/j.ejca.2008.10.026) criteria are based
 on the **sum** of individually measured target lesions (up to 5 in total and up to 2 per
 organ), each of which may respond differently to treatment even within the same patient.
-This notebook implements only the target-lesion component and extends the framework by:
+This notebook implements the target-lesion component plus an assumed new-lesion process, and extends the framework by:
 
   - simulating multiple individual lesions per patient,
   - deriving total SLD as their sum,
@@ -153,36 +153,60 @@ For each patient, we identify the first time point at which RECIST progression i
 are treated as censored for progression at their last observed time point.
 
 ```{r extract-progression-times}
-progression_times <- extract_progression_times(recist_data)
+target_progression_times <- extract_progression_times(recist_data)
+
+# New lesions are an independent RECIST progression criterion. They appear as a Poisson
+# process (assumed constant rate, ~30% of patients over 104 weeks) and are only observed
+# at the next scheduled scan. The earliest of target-lesion progression and new-lesion
+# detection defines progression.
+new_lesion_rate <- -log(0.70) / 104
+new_lesion_times <- simulate_new_lesion_times(
+  target_progression_times$patient_id, new_lesion_rate, assessment_times
+)
+progression_times <- add_new_lesion_progression(target_progression_times, new_lesion_times)
 
 head(progression_times, 10)
+table(progression_times$progression_cause)
 cat("Number of patients with RECIST progression detected:", sum(progression_times$progression_event), "out of", nrow(progression_times), "\n")
 progression_times %>% filter(progression_event == 0)
 ```
 
 **Observation.** The extraction produces one progression record per patient and keeps
 non-progressors as censored observations at their last scan. Patients without observed
-progression are therefore not silently discarded.
+progression are therefore not silently discarded. The `progression_cause` column shows
+how many progressions come from target-lesion growth versus a new lesion. The new-lesion
+rate is an illustrative assumption, not an estimate from clinical data.
 
 ## 7. Constructing PFS as a composite endpoint
 
 Progression-Free Survival (PFS) is a composite time-to-event endpoint: a patient experiences a PFS event at the earliest of RECIST progression or death, whichever occurs first. We combine the RECIST progression times from Section 6 with the OS data from notebook 1 to construct PFS.
 
 ```{r construct-pfs}
+# Non-informative loss to follow-up (assumed rate 0.002/week, ~19% of patients over
+# 104 weeks), applied identically to PFS and OS. It censors patients before their
+# event, which is how real trials avoid a near-100% event rate.
+dropout_rate <- 0.002
+dropout_time <- setNames(rexp(nrow(patients), rate = dropout_rate), patients$patient_id)
+
 pfs_data <- patients %>%
   select(patient_id, os_time, os_event) %>%
   left_join(progression_times, by = "patient_id") %>%
   mutate(
     progression_time_filled = if_else(progression_event == 1, progression_time, last_observed_time),
-    pfs_time = pmin(progression_time_filled, os_time),
-    pfs_event = as.integer(progression_event == 1 | os_event == 1)
+    pfs_time_true = pmin(progression_time_filled, os_time),
+    pfs_event_true = as.integer(progression_event == 1 | os_event == 1),
+    dropout = dropout_time[as.character(patient_id)],
+    pfs_time = pmin(pfs_time_true, dropout),
+    pfs_event = as.integer(pfs_event_true == 1 & pfs_time_true <= dropout),
+    os_event = as.integer(os_event == 1 & os_time <= dropout),
+    os_time = pmin(os_time, dropout)
   )
 
 head(pfs_data, 10)
 ```
 
-**Endpoint decision.** PFS is the earliest of detected RECIST progression and death.
-The component times and event indicators remain in the table, preserving traceability
+**Endpoint decision.** PFS is the earliest of detected RECIST progression (target or new
+lesion) and death, censored at loss to follow-up. The component times and event indicators remain in the table, preserving traceability
 for every composite endpoint.
 
 ## 8. Comparing PFS and OS
@@ -207,12 +231,17 @@ comparison_data %>%
   summarise(median_time = median(time), event_rate = mean(event))
 ```
 
-**Result.** Median PFS is **36 weeks**, earlier than median OS at **52.3 weeks**. The PFS
-event rate is **98.5%**, compared with **77%** for OS. This ordering is coherent with the
-composite definition: progression can occur before death and therefore adds earlier
-events. However, 98.5% represents endpoint saturation in this simulated 104-week
-stress-test scenario. It is not presented as a realistic clinical-trial event rate and
-it limits discrimination late in follow-up.
+**Result.** Median PFS is **30 weeks**, earlier than median OS at **46.2 weeks**. The PFS
+event rate is **94.5%**, compared with **72.5%** for OS. This ordering is coherent with
+the composite definition: progression can occur before death and therefore adds earlier
+events. Adding new-lesion progression and loss to follow-up moved these figures from the
+earlier target-lesion-only version (36 vs. 52.3 weeks, 98.5% vs. 77%), but the PFS event
+rate remains close to saturation. The cause is the notebook 1 regrowth model: the
+`exp(d*t)` term makes almost every simulated tumor progress within 104 weeks, and
+censoring can only remove a fraction of events. A lower event rate would require a
+different regrowth distribution in notebook 1, not another endpoint construction. This
+is therefore a stress-test scenario, not a realistic clinical-trial event rate, and it
+limits discrimination late in follow-up.
 
 ## 9. Conclusion, limitations, and decisions for Notebook 04
 
@@ -243,8 +272,10 @@ rather than an independently simulated hazard.
   further scans); this does not bias `pfs_time` itself, since `pmin()` always resolves
   to the earlier of progression or death, but it is a modeling simplification worth
   noting.
-- New lesion appearance — one of the three RECIST progression criteria alongside target
-  lesion growth — is not modeled here; only growth of existing target lesions is
-  considered. This is therefore a simplified target-lesion implementation, not complete
-  RECIST 1.1 adjudication.
-
+- New lesion appearance is modeled as a homogeneous Poisson process with an assumed
+  rate (~30% of patients over 104 weeks) and is not linked to tumor burden, drug
+  exposure, or the patient's growth parameters. Non-target and non-measurable disease
+  are not modeled, so this remains a simplified implementation, not complete RECIST 1.1
+  adjudication.
+- Loss to follow-up is assumed non-informative (constant rate, independent of disease
+  course); informative dropout would bias PFS and OS.

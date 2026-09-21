@@ -234,7 +234,7 @@ one arm’s nadir for the other would invalidate the comparison because treatmen
 both the minimum burden and the subsequent relative increase.
 ## 8. Constructing PFS and OS for both arms
 
-For each arm, we extract the first time of RECIST progression. For OS, death is simulated
+For each arm, we extract the first time of target-lesion RECIST progression, then combine it with new-lesion detection (same Poisson appearance times in both arms), the earliest of the two defining progression. For OS, death is simulated
 interval by interval from a hazard that depends on tumor burden at the **start** of that
 interval. Thus an event at time `t` can only depend on information available before
 `t`; the former use of tumor burden at day 728 to simulate death from day 0 has been
@@ -243,6 +243,18 @@ removed. This remains a prognostic association model, not a causal biological mo
 ```{r construct-pfs-both-arms}
 prog_adc <- extract_progression_times(recist_adc)
 prog_no_drug <- extract_progression_times(recist_no_drug)
+
+# New lesions (independent RECIST progression criterion): Poisson appearance with an
+# assumed ~30% of patients over 728 days, observed at the next weekly scan. The same
+# appearance times are used in both arms, i.e. the ADC is assumed to have no effect on
+# new-lesion development. This is a conservative simplification that dilutes the ADC
+# benefit on PFS.
+new_lesion_rate <- -log(0.70) / 728
+new_lesion_times <- simulate_new_lesion_times(prog_adc$patient_id, new_lesion_rate, time_grid)
+prog_adc <- add_new_lesion_progression(prog_adc, new_lesion_times)
+prog_no_drug <- add_new_lesion_progression(prog_no_drug, new_lesion_times)
+table(ADC = prog_adc$progression_cause, useNA = "ifany")
+table(No_ADC = prog_no_drug$progression_cause, useNA = "ifany")
 
 # Recompute the treated trajectory used for OS with treatment stopped at the first
 # detected progression. The pre-progression path, and therefore PFS, is unchanged.
@@ -381,6 +393,62 @@ Historical p-values are not retained in prose because correcting the integration
 growth parameter, and OS mechanism changes the generated endpoints. Any observed
 separation describes one seeded simulation and is not clinical evidence for a product.
 
+### Sensitivity of progression to `Emax`
+
+Because `Emax = 0.003` is a scenario calibration, we show how strongly the treated-arm
+progression rate depends on it. Each value is simulated with 5 independent seeds
+(same lesion and PK/PD construction as Sections 3-7, treated arm only; OS is not
+simulated here). It only considers target-lesion progression, without the new-lesion
+process of Section 8, to isolate the effect of `Emax`. This block runs after all results above and does not affect them.
+
+```{r emax-sensitivity}
+run_progression_rate <- function(Emax_value, seed) {
+  set.seed(seed)
+  pts <- patients %>% mutate(kel_i = rlnorm(n(), meanlog = log(0.05), sdlog = 0.20))
+  lesion_tbl <- pts %>%
+    rowwise() %>%
+    do({
+      pt <- .
+      n <- sample(n_lesions_min:n_lesions_max, 1)
+      tibble(patient_id = pt$patient_id, d_daily = pt$d * runif(n, 0.7, 1.3) / 7,
+             SLD0_lesion = (pt$SLD0 / n) * runif(n, 0.7, 1.3))
+    }) %>%
+    ungroup()
+  inhib <- lapply(seq_len(nrow(pts)), function(k) {
+    emax_effect(repeated_dose_concentration(time_grid, pts$kel_i[k], dosing_times, dose, V),
+                Emax_value, EC50)
+  })
+  names(inhib) <- pts$patient_id
+  paths <- lapply(seq_len(nrow(lesion_tbl)), function(k) {
+    h <- inhib[[as.character(lesion_tbl$patient_id[k])]]
+    x <- numeric(length(time_grid)); x[1] <- lesion_tbl$SLD0_lesion[k]
+    for (t in 2:length(time_grid)) {
+      x[t] <- x[t - 1] + (time_grid[t] - time_grid[t - 1]) *
+        (lesion_tbl$d_daily[k] - h[t - 1]) * x[t - 1]
+    }
+    data.frame(patient_id = lesion_tbl$patient_id[k], time = time_grid, sld = x)
+  })
+  total <- bind_rows(paths) %>%
+    group_by(patient_id, time) %>%
+    summarise(SLD_total = sum(sld), .groups = "drop")
+  mean(extract_progression_times(detect_progression(total, "SLD_total"))$progression_event == 1)
+}
+
+sens_grid <- expand.grid(Emax = c(0, 0.003, 0.01, 0.05), seed = 101:105)
+sens_grid$progression_rate <- mapply(run_progression_rate, sens_grid$Emax, sens_grid$seed)
+
+sens_grid %>%
+  group_by(Emax) %>%
+  summarise(mean_progression_rate = mean(progression_rate),
+            min = min(progression_rate), max = max(progression_rate), .groups = "drop")
+```
+
+**Sensitivity reading.** `Emax = 0` is the no-drug reference; larger values quickly
+suppress progression altogether. The chosen `0.003` sits in the narrow range where the
+treated arm still progresses in part of the population, which is why it was retained:
+at larger values the PFS comparison would be degenerate. The result is therefore highly
+sensitive to this parameter, another reason not to read the contrasts as clinical effects.
+
 ## 10. General conclusion, limitations, and next decisions
 
 This notebook connects the two previously separate strands of the project: the
@@ -403,7 +471,8 @@ same-source counterfactuals remain unsuitable for clinical-effect claims.
    estimated values and document parameter uncertainty.
 2. Extend the implemented stop-at-progression rule to model subsequent therapy, dose
    delays, reductions, and toxicity-driven discontinuations.
-3. Add new-lesion progression and non-target disease to the RECIST implementation.
+3. Link new-lesion appearance to tumor burden and exposure, and add non-target disease to
+   the RECIST implementation.
 4. Run repeated simulation scenarios and report uncertainty intervals for treatment
    effects instead of a single seeded realization.
 5. Validate the workflow on an independent clinical dataset before drawing any
@@ -425,7 +494,9 @@ same-source counterfactuals remain unsuitable for clinical-effect claims.
   weekly grid. This avoids attributing continued post-progression benefit to the study
   treatment. Subsequent therapy, delayed discontinuation, dose modification, and
   toxicity-driven stopping are still not modeled.
-- As in notebook 3, new lesion appearance is not modeled; only growth/shrinkage of
-  existing target lesions is considered.
+- New lesions appear as a Poisson process with an assumed rate, identical in both arms
+  (no ADC effect on new-lesion development) and unrelated to tumor burden. Non-target
+  disease is not modeled. Because the ADC is assumed not to prevent new lesions, its
+  PFS benefit is diluted relative to a model where treatment also delays them.
 - As in notebook 2, all patients follow the same fixed q3w schedule; real-world
   dose modifications, delays, and discontinuations due to toxicity are not modeled.
