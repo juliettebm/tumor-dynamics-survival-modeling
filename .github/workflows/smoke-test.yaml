@@ -41,5 +41,4 @@ jobs:
           source("tests/check-results.R")
 
       - name: Render notebook 01 and validate outputs
-        shell: Rscript {0}
-        run: tests/smoke-test.R
+        run: Rscript tests/smoke-test.R
